@@ -34,6 +34,9 @@ data class CssRect(val x: Float, val y: Float, val w: Float, val h: Float)
     val focused: Boolean, val hint: String?, val rows: List<AddRow>
 )
 
+/** Now Playing 의 캡슐 버튼. kind: "x"(닫기) · "fs"(전체화면) · "lv"(가사 화면 닫기) */
+@Immutable data class NpBtn(val kind: String, val rect: CssRect, val on: Boolean)
+
 @Immutable
 data class GlassState(
     val accent: Long = 0xFFFA2D5AL,
@@ -43,7 +46,8 @@ data class GlassState(
     val ctx: CtxState? = null,
     val dialog: DialogState? = null,
     val confirm: ConfirmState? = null,
-    val add: AddModalState? = null
+    val add: AddModalState? = null,
+    val np: List<NpBtn> = emptyList()
 ) {
     companion object {
         fun parse(json: String): GlassState {
@@ -71,6 +75,14 @@ data class GlassState(
                     ConfirmState(rect(it), it.optString("title"), it.optString("msg"),
                         it.optString("ok"), it.optString("cancel"))
                 },
+                np = o.optJSONArray("np")?.let { a ->
+                    buildList {
+                        for (i in 0 until a.length()) {
+                            val b = a.getJSONObject(i)
+                            add(NpBtn(b.optString("k"), rect(b), b.optBoolean("on")))
+                        }
+                    }
+                } ?: emptyList(),
                 add = o.optJSONObject("add")?.let { a ->
                     val rows = a.optJSONArray("rows")
                     AddModalState(rect(a), a.optString("title"), a.optString("value"), a.optString("ph"),
