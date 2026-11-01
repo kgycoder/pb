@@ -79,6 +79,7 @@ fun GlassRoot(webView: WebView, c: GlassController) {
             if (nav != null) DockGlass(nav, s.bar, backdrop, c, merge)
             else s.bar?.let { BarGlass(it, backdrop, c) }          // 가로 모드 등 도크가 없을 때
             s.search?.let { SearchGlass(it, backdrop, c) }
+            if (s.np.isNotEmpty()) NpButtonsGlass(s.np, backdrop, c)
         }
         s.ctx?.let { ContextMenuGlass(it, backdrop, c) }
         s.dialog?.let { DialogGlass(it, backdrop, c) }
@@ -161,13 +162,19 @@ internal class RegionRecorder(private val c: GlassController) {
         val rects = listOfNotNull(
             s.nav?.rect, s.bar?.rect, s.search?.let { it.rect.copy(y = maxOf(it.pin, it.rect.y - scroll)) }, s.ctx?.rect, s.dialog?.rect, s.confirm?.rect, s.add?.rect
         )
-        if (rects.isEmpty()) return null
+        // Now Playing 의 작은 캡슐 버튼(38dp)은 블러/굴절/눌림 확대가 닿는 범위만 여유를 두면 충분하다 → 훨씬 작은 영역만 기록
+        val small = s.np.map { it.rect }
+        if (rects.isEmpty() && small.isEmpty()) return null
+        val padSmall = PAD_SMALL_DP * d
         return Path().apply {
             rects.forEach { r ->
                 addRect(Rect(r.x * d - pad, r.y * d - pad, (r.x + r.w) * d + pad, (r.y + r.h) * d + pad))
             }
+            small.forEach { r ->
+                addRect(Rect(r.x * d - padSmall, r.y * d - padSmall, (r.x + r.w) * d + padSmall, (r.y + r.h) * d + padSmall))
+            }
         }
     }
 
-    private companion object { const val PAD_DP = 96f }
+    private companion object { const val PAD_DP = 96f; const val PAD_SMALL_DP = 56f }
 }
