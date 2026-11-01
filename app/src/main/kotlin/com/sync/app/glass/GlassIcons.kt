@@ -35,6 +35,10 @@ internal object GlassIcons {
     val Heart by lazy { p("M7.5 12.5S2 8.8 2 5.5a3 3 0 0 1 5.5-1.65A3 3 0 0 1 13 5.5C13 8.8 7.5 12.5 7.5 12.5z") }
     val Plus by lazy { listOf(p("M5.5 1L5.5 10"), p("M1 5.5L10 5.5")) }
     val Check by lazy { listOf(p("M2 6L5 9L9 3")) }
+    // Now Playing 캡슐 버튼 (index.html 의 원본 SVG 경로 그대로: 13 / 16 / 15 viewBox)
+    val NpClose by lazy { listOf(p("M1.5 1.5L11.5 11.5"), p("M11.5 1.5L1.5 11.5")) }
+    val NpExpand by lazy { listOf(p("M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5")) }
+    val NpChevronDown by lazy { listOf(p("M3 5.5L7.5 10L12 5.5")) }
     val Close by lazy { listOf(p("M1.5 1.5L10.5 10.5"), p("M10.5 1.5L1.5 10.5")) }
 }
 
