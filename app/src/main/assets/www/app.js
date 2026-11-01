@@ -61,6 +61,11 @@ function stopBeatTimer() { clearInterval(_beatTimer); _beatTimer = null; }
 
 let _bgRafId = null;
 let _npElRef = null;
+/* 스크롤/제스처 중에는 배경 캔버스를 다시 그리지 않는다.
+   캔버스가 갱신되면 그 위의 backdrop-filter(.bg-over) 와 네이티브 글래스의 배경 캡처가 함께 다시 계산되어
+   스크롤 프레임을 빼앗는다. 오브는 이미 느리고 흐릿해서 스크롤 중 정지해도 보이지 않는다. */
+let _bgScrollTs = 0;
+addEventListener('scroll', () => { _bgScrollTs = performance.now(); }, { passive: true, capture: true });
 function _npIsOpen() {
     if (!_npElRef) _npElRef = document.getElementById('np');
     return !!(_npElRef && _npElRef.classList.contains('on'));
@@ -87,7 +92,8 @@ function bgLoop() {
     // 실제 그리기는 2프레임에 1번(30fps). 매 프레임 전체 화면을 다시 그리면 WebView 합성과
     // 네이티브 글래스(배경 캡처·블러)까지 60fps 로 다시 계산되어 시간이 지날수록 부하/발열이 커진다.
     // 일시정지 중에는 오브 이동이 프레임당 1px 미만이고 위에 blur(120px) 오버레이가 덮여 있어 10fps 로도 구분이 안 된다.
-    if (BG.f % (BG.playing ? 2 : 6)) return;
+    if (BG.f % (BG.playing ? 3 : 6)) return;            // 재생 중 20fps(이전 30fps)
+    if (performance.now() - _bgScrollTs < 220) return;  // 스크롤 중 정지
     // 전체화면 플레이어(#np, 불투명)가 덮고 있는 동안엔 보이지 않으므로 그리지 않는다.
     if (_npIsOpen()) return;
 
@@ -212,7 +218,7 @@ const NP_MESH = {
     targetColors: null,
     nodes: [],
     initialized: false,
-    RES: 180
+    RES: 64      // 6개 노드의 부드러운 그라디언트라 64×64 로도 동일하게 보인다(180 → 64: 픽셀 연산 약 1/8)
 };
 
 function initNpMesh() {
@@ -508,8 +514,9 @@ function renderNpMesh(beat, en) {
     const cvs = NP_MESH.canvas, ctx = NP_MESH.ctx;
     const off = NP_MESH.offCanvas, octx = NP_MESH.offCtx;
     if (!cvs || !ctx || !off || !octx) return;
-    const nw = innerWidth;
-    const nh = innerHeight;
+    // 화면 크기 캔버스를 20Hz 로 다시 그리고 CSS blur 까지 얹던 구조 → 1/4 해상도 캔버스를 CSS 로 늘려 표시(blur 로 경계 제거)
+    const nw = Math.max(1, Math.round(innerWidth / 4));
+    const nh = Math.max(1, Math.round(innerHeight / 4));
     if (nw !== NP_MESH.W || nh !== NP_MESH.H) {
         NP_MESH.W = cvs.width = nw;
         NP_MESH.H = cvs.height = nh;
@@ -669,7 +676,7 @@ function _beatCards() {
     return out;
 }
 
-let _lastNpGlow = '', _lastNpCol = '', _npIdleTick = 0, _beatDirty = false, _vbList = null;
+let _lastVbCol = '', _lastNpGlow = '', _lastNpCol = '', _npIdleTick = 0, _beatDirty = false, _vbList = null;
 function updateNpColor() {
     _moodH += (_tMoodH - _moodH) * .04;
     const h = Math.round(_moodH), s = _moodS, l = _moodL;
@@ -723,12 +730,15 @@ function updateNpColor() {
 
     if (S.playing) {
         if (!_vbList || !_vbList.length) _vbList = document.querySelectorAll('.vb');
+        const vbCol = `hsl(${h},${s}%,62%)`;
+        const vbColChanged = vbCol !== _lastVbCol; _lastVbCol = vbCol;
         _vbList.forEach((b, i) => {
-            b.style.background = `hsl(${h},${s}%,62%)`;
+            if (vbColChanged) b.style.background = vbCol;      // 같은 값을 매 틱(20Hz) 다시 쓰지 않는다
             if (beat > .06) {
                 const ht = 1 + beat * en * (0.8 + Math.sin(i * 1.4 + BG.f * .08) * 0.5);
                 b.style.transform = `scaleY(${ht.toFixed(3)})`;
-            } else b.style.transform = '';
+                b._tfOn = true;
+            } else if (b._tfOn) { b.style.transform = ''; b._tfOn = false; }
         });
     }
 
@@ -2963,7 +2973,7 @@ const LY = {
      현재 속도를 유지한 채 새 목표로 자연스럽게 이어 붙는다(관성).
 ──────────────────────────────────────────────────────────────── */
 function _makeSpring(stiffness = 80, damping = 15, mass = 1) {
-    let pos = 0, target = 0, vel = 0, raf = null, last = 0, onFrame = null;
+    let pos = 0, target = 0, vel = 0, raf = null, last = 0, onFrame = null, held = false;
     function tick(now) {
         const dt = Math.min((now - last) / 1000, 0.032) || 0.016;
         last = now;
@@ -2979,8 +2989,12 @@ function _makeSpring(stiffness = 80, damping = 15, mass = 1) {
         to(t, cb) {
             onFrame = cb || onFrame;
             target = t;
+            if (held) return;   // 사용자가 가사를 직접 스크롤하는 동안엔 목표만 갱신하고 끌어당기지 않는다
             if (!raf) { last = performance.now(); raf = requestAnimationFrame(tick); }
         },
+        /* 실제 화면 위치(드래그/관성 결과)를 스프링 내부 상태에 반영 → 복귀 시 옛 위치로 튀지 않고 현재 위치에서 출발 */
+        seed(v) { pos = v; vel = 0; },
+        hold(on) { held = !!on; },
         jump(v, cb) {
             onFrame = cb || onFrame;
             pos = target = v; vel = 0;
@@ -3001,33 +3015,124 @@ function _attachLyricDragScroll(scrollEl, getInner, getSpring, resumeFn) {
     scrollEl._dragAttached = true;
     let dragging = false, startY = 0, startPos = 0, moved = false, resumeTimer = null;
 
+    /* 관성(momentum) 스크롤 — 일반 HTML 스크롤처럼 손을 뗀 속도로 미끄러지며 감속한다.
+       · 감속: 속도가 시간상수(FLING_TAU)로 지수 감쇠
+       · 경계: 첫 줄/마지막 줄이 중앙에 오는 위치까지만 이동, 넘기면 고무줄처럼 늘어났다가 스프링으로 복귀 */
+    const FLING_TAU = 380, OVER = 90, RESUME_MS = 2200;
+    let pos = 0, vel = 0, flingRaf = 0, flingLast = 0, samples = [], panned = false;
+
     function currentY(inner) {
         const m = /translateY\(([-\d.]+)px\)/.exec(inner?.style.transform || '');
         return m ? parseFloat(m[1]) : 0;
     }
+    function bounds(inner) {
+        const first = inner.firstElementChild, last = inner.lastElementChild;
+        if (!first || !last) return null;
+        const padTop = parseFloat(getComputedStyle(scrollEl).paddingTop) || 0;
+        const half = scrollEl.clientHeight / 2 - padTop;
+        const hi = half - (first.offsetTop + first.offsetHeight / 2);
+        const lo = half - (last.offsetTop + last.offsetHeight / 2);
+        return { lo: Math.min(lo, hi), hi: Math.max(lo, hi) };
+    }
+    function rubber(y, bd) {
+        if (!bd) return y;
+        if (y > bd.hi) return bd.hi + OVER * (1 - Math.exp(-(y - bd.hi) / (OVER * 1.5)));
+        if (y < bd.lo) return bd.lo - OVER * (1 - Math.exp(-(bd.lo - y) / (OVER * 1.5)));
+        return y;
+    }
+    function put(inner, y) { pos = y; inner.style.transform = `translateY(${y}px)`; }
+    function stopFling() { if (flingRaf) { cancelAnimationFrame(flingRaf); flingRaf = 0; } }
+    function scheduleResume() {
+        clearTimeout(resumeTimer);
+        // 손을 뗀 후(관성이 끝난 뒤) 잠시 기다렸다가, 기존 스프링 애니메이션으로 현재 재생 줄에 복귀
+        resumeTimer = setTimeout(() => {
+            const sp = getSpring();
+            if (sp && sp.hold) sp.hold(false);
+            resumeFn();
+        }, RESUME_MS);
+    }
+    function settle(inner) {
+        const sp = getSpring();
+        if (sp && sp.seed) sp.seed(pos);
+        scheduleResume();
+    }
+    function fling(inner) {
+        stopFling();
+        const bd = bounds(inner);
+        flingLast = performance.now();
+        let wasOut = false;
+        const step = now => {
+            if (!inner.isConnected) { flingRaf = 0; return; }
+            const dt = Math.min(now - flingLast, 32) || 16;
+            flingLast = now;
+            let edge = null;
+            if (bd) { if (pos > bd.hi) edge = bd.hi; else if (pos < bd.lo) edge = bd.lo; }
+            if (edge === null) {
+                vel *= Math.exp(-dt / FLING_TAU);
+                wasOut = false;
+            } else {
+                if (!wasOut) { vel *= 0.4; wasOut = true; }      // 경계에 닿는 순간 에너지 흡수
+                vel += (-(pos - edge) * 0.0006 - vel * 0.045) * dt;
+            }
+            put(inner, pos + vel * dt);
+            const settled = edge === null
+                ? Math.abs(vel) < 0.012
+                : (Math.abs(vel) < 0.01 && Math.abs(pos - edge) < 0.3);
+            if (settled) {
+                if (edge !== null) put(inner, edge);
+                flingRaf = 0; settle(inner); return;
+            }
+            flingRaf = requestAnimationFrame(step);
+        };
+        flingRaf = requestAnimationFrame(step);
+    }
+
     function down(y) {
         const inner = getInner();
         if (!inner) return;
-        dragging = true; moved = false; startY = y;
+        const wasFlinging = !!flingRaf;
+        stopFling();
+        dragging = true; panned = false;
+        moved = wasFlinging;   // 미끄러지는 중 손가락으로 멈춘 탭은 가사 seek 로 처리하지 않는다
+        startY = y;
         startPos = currentY(inner);
+        pos = startPos; vel = 0; samples = [{ t: performance.now(), y }];
         clearTimeout(resumeTimer);
         const spring = getSpring();
-        if (spring) spring.stop();
+        if (spring) { spring.stop(); if (spring.seed) spring.seed(startPos); }
     }
     function move(y) {
         if (!dragging) return;
         const inner = getInner();
         if (!inner) return;
         const dy = y - startY;
-        if (Math.abs(dy) > 4) moved = true;
-        inner.style.transform = `translateY(${startPos + dy}px)`;
+        if (Math.abs(dy) > 4 && !panned) {
+            panned = true; moved = true;
+            const sp = getSpring();
+            if (sp && sp.hold) sp.hold(true);   // 드래그 중 재생 줄이 바뀌어도 스프링이 손가락과 싸우지 않게 한다
+        }
+        const now = performance.now();
+        samples.push({ t: now, y });
+        while (samples.length > 2 && now - samples[0].t > 100) samples.shift();
+        put(inner, rubber(startPos + dy, panned ? bounds(inner) : null));
     }
     function up() {
         if (!dragging) return;
         dragging = false;
-        clearTimeout(resumeTimer);
-        // 손을 뗀 후 잠시 기다렸다가, 기존 스프링 애니메이션으로 현재 재생 줄에 복귀
-        resumeTimer = setTimeout(() => { resumeFn(); }, 2200);
+        const inner = getInner();
+        if (!inner) return;
+        // 손을 떼는 순간의 속도(px/ms): 마지막 ~100ms 구간. 손가락이 멈춘 채 뗐다면 0.
+        let v = 0;
+        const now = performance.now(), n = samples.length;
+        if (panned && n >= 2 && now - samples[n - 1].t < 80) {
+            const dtv = samples[n - 1].t - samples[0].t;
+            if (dtv > 8) v = (samples[n - 1].y - samples[0].y) / dtv;
+        }
+        vel = Math.max(-6, Math.min(6, v));
+        const bd = panned ? bounds(inner) : null;
+        const out = !!bd && (pos > bd.hi + 0.5 || pos < bd.lo - 0.5);
+        if (panned && (Math.abs(vel) > 0.06 || out)) fling(inner);
+        else settle(inner);
     }
 
     scrollEl.addEventListener('touchstart', e => down(e.touches[0].clientY), { passive: true });
@@ -3037,6 +3142,19 @@ function _attachLyricDragScroll(scrollEl, getInner, getSpring, resumeFn) {
     scrollEl.addEventListener('mousedown', e => down(e.clientY));
     window.addEventListener('mousemove', e => { if (dragging) move(e.clientY); });
     window.addEventListener('mouseup', up);
+    // PC: 마우스 휠도 같은 관성 경로를 탄다(손가락 대신 한 번의 속도 주입)
+    scrollEl.addEventListener('wheel', e => {
+        const inner = getInner();
+        if (!inner) return;
+        e.preventDefault();
+        stopFling(); clearTimeout(resumeTimer);
+        const sp = getSpring();
+        if (sp) { sp.stop(); if (sp.hold) sp.hold(true); }
+        pos = currentY(inner);
+        vel = Math.max(-6, Math.min(6, -e.deltaY * 0.012 + vel * 0.5));
+        moved = false;
+        fling(inner);
+    }, { passive: false });
     // 드래그 직후 발생하는 클릭(가사 탭 seek)이 오작동하지 않도록 차단
     scrollEl.addEventListener('click', e => {
         if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
@@ -3765,13 +3883,21 @@ function _highlightLine(idx, instant) {
             // 관성 스프링에 따라 위/아래 줄들의 간격이 순간적으로 벌어졌다가
             // 스프링이 정착하며 다시 붙는 elastic-spread 효과 (velocity 기반, 자동으로 0에 수렴)
             const spread = Math.max(-20, Math.min(20, vel * -0.055));
-            LY.lines.forEach((line, i) => {
-                if (!line.el) return;
+            // 화면에 보이는 현재 줄 주변(±8)만 프레임마다 갱신 — 수십~수백 줄의 style 을 60fps 로 전부 쓰면
+            // 스타일 재계산이 누적되어 발열/프레임 저하의 원인이 된다. 범위 밖 줄은 남은 오프셋만 한 번 지운다.
+            const L = LY.lines;
+            for (let i = 0; i < L.length; i++) {
+                const line = L[i];
+                if (!line.el) continue;
                 const d = i - idx;
-                if (d === 0) { line.el.style.transform = 'translateY(0px)'; return; }
-                const k = Math.sign(d) * Math.min(Math.abs(d), 4);
-                line.el.style.transform = `translateY(${spread * k}px)`;
-            });
+                if (d > 8 || d < -8) {
+                    if (line._tf) { line.el.style.transform = ''; line._tf = 0; }
+                    continue;
+                }
+                const k = d === 0 ? 0 : Math.sign(d) * Math.min(Math.abs(d), 4);
+                const tf = k === 0 ? 'translateY(0px)' : `translateY(${(spread * k).toFixed(2)}px)`;
+                if (line._tfv !== tf) { line.el.style.transform = tf; line._tfv = tf; line._tf = 1; }
+            }
         };
         if (instant) {
             LY._scrollSpring.jump(target, applyFrame);
