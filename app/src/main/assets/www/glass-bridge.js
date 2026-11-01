@@ -132,6 +132,16 @@
             };
         }
 
+        /* Now Playing 캡슐 버튼: 닫기 / 전체화면 / 가사 화면 닫기 (DOM 은 위치·상태 원천, 유리·터치는 네이티브) */
+        if (npEl && npEl.classList.contains('on')) {
+            const list = [];
+            [['x', '.np-x'], ['fs', '#np-fs-btn'], ['lv', '#np-lv-close']].forEach(d => {
+                const el = document.querySelector(d[1]);
+                if (el && exposed(el)) list.push({ k: d[0], r: box(el.getBoundingClientRect()), on: el.classList.contains('on') });
+            });
+            if (list.length) st.np = list;
+        }
+
         /* "플레이리스트에 추가" 컨텍스트 메뉴 */
         const ctx = $('pl-ctx-menu');
         if (ctx && ctx.classList.contains('on')) {
@@ -203,7 +213,7 @@
 
     /* 레이아웃/상태에 실제 영향이 있는 변화만 반응 (재생 진행/가사 하이라이트 등은 무시 → 메인 스레드 부하 0) */
     const OVERLAYS = '#pl-ctx-menu,#pl-dialog-overlay,#pl-confirm-overlay,#pl-add-modal-overlay';
-    const HOSTS = '#mob-nav,#bar,.mob-srch-wrap';
+    const HOSTS = '#mob-nav,#bar,.mob-srch-wrap,.np-x,#np-fs-btn';
     const mo = new MutationObserver(recs => {
         let burst = false, once = false;
         for (const r of recs) {
@@ -211,7 +221,7 @@
             if (!t || t.id === 'bar-prog-fill') continue;
             // 박자 효과(카드 transform/shadow, 비주얼라이저 등)는 글래스 레이아웃과 무관 — closest() 비용도 아낀다
             if (t.classList && (t.classList.contains('card') || t.classList.contains('vb'))) continue;
-            if (t.id === 'np' || t.classList.contains('view') || t.id === 'bar') { if (t.id === 'np') syncNpLock(); once = true; continue; }
+            if (t.id === 'np' || t.id === 'np-lv' || t.classList.contains('view') || t.id === 'bar') { if (t.id === 'np') syncNpLock(); once = true; continue; }
             if (t.closest) {
                 if (t.closest(OVERLAYS)) { burst = true; break; }
                 if (t.closest(HOSTS)) once = true;
@@ -289,6 +299,12 @@
                     else if (c.a === 'fav') favCur();
                     else if (c.a === 'play') togglePlay();
                     else if (c.a === 'next') nextT();
+                    break;
+                }
+                case 'np': {
+                    if (c.a === 'x') closeNP();
+                    else if (c.a === 'fs') toggleNpFullscreen();
+                    else if (c.a === 'lv') closeLyricsView();
                     break;
                 }
                 case 'text': {
