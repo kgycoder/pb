@@ -363,7 +363,7 @@ public class MainActivity extends AppCompatActivity {
                         });
                         break;
                     case "orientation":
-                        String orient = msg.optString("value", "sensor");
+                        String orient = msg.optString("value", "portrait");
                         runOnUiThread(() -> setOrientation(orient)); break;
                     default: break;
                 }
@@ -395,8 +395,9 @@ public class MainActivity extends AppCompatActivity {
                     ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             hideSystemUI();
         } else {
+            // 기본은 세로 고정(자동 회전 없음). 가로는 NP 전체화면에서만 허용된다.
             setRequestedOrientation(
-                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+                    ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
             showSystemUI();
         }
     }
