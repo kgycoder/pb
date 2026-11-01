@@ -5483,3 +5483,33 @@ html.glass-native .c-dur {
 
 /* 배경 캔버스는 별도 합성 레이어로 고정해, 캔버스 갱신이 아래/위 DOM 의 다시 그리기를 유발하지 않게 한다. */
 /* (will-change 로 큰 캔버스를 별도 타일 레이어로 올리면 타일 경계가 격자 무늬로 보여 제거) */
+
+/* ── Now Playing 캡슐 버튼(닫기 · 전체화면 · 가사 화면 닫기): Liquid Glass 로 전환 ──
+   유리 표면/아이콘/터치는 Compose(GlassNp.kt)가 담당하고 DOM 버튼은 위치·상태의 원천으로만 남는다.
+   DOM 쪽 backdrop-filter(blur 24px)도 함께 사라지므로 합성 비용은 오히려 줄어든다. */
+html.glass-native .np-x,
+html.glass-native .np-fs-btn,
+html.glass-native .np-lv-close {
+    opacity: 0 !important;
+    background: none !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    transition: none !important;
+}
+
+/* ── 성능: NP 메시 배경 ──
+   캔버스가 1/4 해상도(JS)라 큰 반경의 blur 가 필요 없다. 20Hz 로 갱신되는 전체 화면 레이어의 blur 반경을 줄인다. */
+html.glass-native #np-bg {
+    filter: blur(6px) saturate(1.2);
+}
+
+/* ── 성능: 가사 줄 ──
+   줄마다 will-change(color/filter)로 별도 레이어를 만들면 줄 수에 비례해 GPU 메모리/합성 비용이 늘어난다.
+   전환 자체는 그대로 동작하고(트랜지션은 유지), 레이어 승격만 제거한다. */
+html.glass-native .np-lyric-line,
+html.glass-native .np-ls-lyric-line,
+html.glass-native .np-fs-lyric-line {
+    will-change: auto !important;
+}
